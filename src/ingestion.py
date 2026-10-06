@@ -1,14 +1,27 @@
 import os
 import glob
 import pdfplumber
+from dotenv import load_dotenv
 from llama_index.core import Document, VectorStoreIndex, Settings, StorageContext
 from llama_index.core.node_parser import HierarchicalNodeParser, get_leaf_nodes
 from llama_index.core.storage.docstore import SimpleDocumentStore
-from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.llms.ollama import Ollama
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openrouter import OpenRouter
 
-Settings.embed_model = OllamaEmbedding(model_name="nomic-embed-text")
-Settings.llm = Ollama(model="llama3.2", request_timeout=360.0)
+load_dotenv()
+
+Settings.embed_model = OpenAIEmbedding(
+    model="text-embedding-3-small",
+    api_base="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY")
+)
+
+Settings.llm = OpenRouter(
+    model="openai/gpt-4o-mini",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    temperature=0.0,
+    max_tokens=2048,
+)
 node_parser = HierarchicalNodeParser.from_defaults(chunk_sizes=[2048, 512])
 
 def ingest_directory_to_index(data_dir: str = "./data", persist_dir: str = "./storage") -> VectorStoreIndex:
@@ -34,7 +47,7 @@ def ingest_directory_to_index(data_dir: str = "./data", persist_dir: str = "./st
                     # Inject both the page number AND the source file name
                     doc = Document(
                         text=text,
-                        metadata={
+                        metadata={ # type: ignore
                             "page_number": i + 1, 
                             "source": os.path.basename(pdf_path)
                         }

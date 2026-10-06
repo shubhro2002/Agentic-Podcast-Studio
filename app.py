@@ -2,6 +2,19 @@ import os
 import shutil
 import streamlit as st
 from typing import cast
+from phoenix.otel import register
+from openinference.instrumentation.langchain import LangChainInstrumentor
+from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
+
+tracer_provider = register(
+    project_name="Agentic-Podcast-Studio",
+    endpoint="http://localhost:6006/v1/traces",
+    batch=True 
+)
+
+LlamaIndexInstrumentor().instrument(tracer_provider=tracer_provider)
+LangChainInstrumentor().instrument(tracer_provider=tracer_provider)
+print("✓ OpenTelemetry Tracing Registered to Phoenix")
 
 from src.ingestion import ingest_directory_to_index
 from src.workflow import build_workflow, GraphState

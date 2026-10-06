@@ -1,20 +1,40 @@
 import os
 import operator
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from typing import TypedDict, cast, List, Annotated
 from typing_extensions import NotRequired
 from langgraph.graph import StateGraph, END
 from llama_index.core import StorageContext, load_index_from_storage, Settings
-from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.llms.ollama import Ollama
-from langchain_ollama import ChatOllama
+from llama_index.embeddings.openai import OpenAIEmbedding
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from llama_index.core.retrievers import AutoMergingRetriever
+from llama_index.llms.openrouter import OpenRouter
 
 from .evaluator import get_evaluator_chain, PodcastScript
 
-Settings.embed_model = OllamaEmbedding(model_name="nomic-embed-text")
-Settings.llm = Ollama(model="llama3.2", request_timeout=360.0)
+load_dotenv()
+
+Settings.embed_model = OpenAIEmbedding(
+    model="text-embedding-3-small",
+    api_base="https://openrouter.ai/api/v1",
+    api_key=os.environ.get("OPENROUTER_API_KEY")
+)
+
+Settings.llm = OpenRouter(
+    model="meta-llama/llama-3.1-70b-instruct",
+    api_key=os.environ.get("OPENROUTER_API_KEY"),
+    temperature=0.0,
+    max_tokens=2048,
+)
+
+llm = ChatOpenAI(
+    model="meta-llama/llama-3.1-70b-instruct",
+    api_key=os.environ.get("OPENROUTER_API_KEY"), # type: ignore
+    base_url="https://openrouter.ai/api/v1",
+    temperature=0.0
+)
 
 class GraphState(TypedDict):
     topic: str
@@ -57,7 +77,6 @@ def outline_node(state: GraphState):
     print("\n=== GENERATING PODCAST OUTLINE ===")
     topic = state["topic"]
     
-    llm = ChatOllama(model="llama3.2", temperature=0.6)
     structured_llm = llm.with_structured_output(PodcastOutline)
     
     prompt = ChatPromptTemplate.from_messages([
@@ -79,7 +98,6 @@ def rewrite_node(state: GraphState):
     print(f"\n--- TRANSFORMING QUERY (Subtopic {state['current_index'] + 1}) ---")
     print(f"  -> Target: {current_subtopic}")
 
-    llm = ChatOllama(model="llama3.2", temperature=0.0)
     structured_llm = llm.with_structured_output(OptimizedSearch)
     prompt = ChatPromptTemplate.from_messages([
         ("system", "Extract only the core entities and keywords from the subtopic to create a dense vector search query. You are strictly forbidden from adding dates or years if they are not explicitly present."),
@@ -142,7 +160,6 @@ def draft_node(state: GraphState):
     feedback = state.get("feedback", "")
     previous_context = state.get("previous_context", "")
     
-    llm = ChatOllama(model="llama3.2", temperature=0.7)
     structured_llm = llm.with_structured_output(DraftScript)
     
     # If we are in a correction loop, append the strict feedback

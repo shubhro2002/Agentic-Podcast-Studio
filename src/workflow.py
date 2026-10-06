@@ -7,33 +7,26 @@ from typing_extensions import NotRequired
 from langgraph.graph import StateGraph, END
 from llama_index.core import StorageContext, load_index_from_storage, Settings
 from llama_index.embeddings.openai import OpenAIEmbedding
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from llama_index.core.retrievers import AutoMergingRetriever
 from llama_index.llms.openrouter import OpenRouter
 
 from .evaluator import get_evaluator_chain, PodcastScript
+from .llm import llm
 
 load_dotenv()
 
 Settings.embed_model = OpenAIEmbedding(
     model="text-embedding-3-small",
     api_base="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("OPENROUTER_API_KEY")
+    api_key=os.getenv("OPENROUTER_API_KEY")
 )
 
 Settings.llm = OpenRouter(
-    model="meta-llama/llama-3.1-70b-instruct",
-    api_key=os.environ.get("OPENROUTER_API_KEY"),
+    model="openai/gpt-4o-mini",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
     temperature=0.0,
     max_tokens=2048,
-)
-
-llm = ChatOpenAI(
-    model="meta-llama/llama-3.1-70b-instruct",
-    api_key=os.environ.get("OPENROUTER_API_KEY"), # type: ignore
-    base_url="https://openrouter.ai/api/v1",
-    temperature=0.0
 )
 
 class GraphState(TypedDict):
@@ -159,19 +152,43 @@ def draft_node(state: GraphState):
     context = state.get("context", "")
     feedback = state.get("feedback", "")
     previous_context = state.get("previous_context", "")
+
+    last_speaker = "Guest"
+    if previous_context:
+        host_idx = previous_context.rfind("Host")
+        guest_idx = previous_context.rfind("Guest")
+        
+        if host_idx > guest_idx:
+            last_speaker = "Host"
+        elif guest_idx > host_idx:
+            last_speaker = "Guest"
+    
+    # 2. ASSIGN NEXT SPEAKERS PROGRAMMATICALLY
+    speaker_1 = "Host" if "Guest" in last_speaker else "Guest"
+    speaker_2 = "Guest" if speaker_1 == "Host" else "Host"
     
     structured_llm = llm.with_structured_output(DraftScript)
     
     # If we are in a correction loop, append the strict feedback
-    system_prompt = "You are a podcast writer. Write an engaging 4-line back-and-forth dialogue using the provided context."
+    system_prompt = (
+        "You are a podcast writer. Write an engaging 4-line back-and-forth dialogue using the provided context.\n"
+        "SPEAKER ROLES:\n"
+        "- Host: A highly analytical, skeptical data journalist. You NEVER use filler reactions. Instead of acting surprised, you immediately challenge the statistics, ask about the methodology, or ask how this applies to the real world.\n"
+        "- Guest: The expert researcher, explains the data, provides the technical facts.\n\n"
+        "CRITICAL TURN-TAKING RULES (YOU MUST OBEY THIS EXACT ORDER):\n"
+        f"Line 1 MUST be spoken by: {speaker_1} (Write text fitting this role)\n"
+        f"Line 2 MUST be spoken by: {speaker_2} (Write text fitting this role)\n"
+        f"Line 3 MUST be spoken by: {speaker_1} (Write text fitting this role)\n"
+        f"Line 4 MUST be spoken by: {speaker_2} (Write text fitting this role)\n"
+    )
     if previous_context:
         system_prompt += (
             f"\n\nPREVIOUS SEGMENT:\n{previous_context}\n\n"
-            "CRITICAL INSTRUCTION: The user just heard the PREVIOUS SEGMENT. The first line of your new draft MUST naturally transition "
-            "from that previous conversation into the new SOURCE CONTEXT. Do not introduce yourselves again.\n"
-            "RULE 1: The dialogue MUST alternate strictly back and forth between the two speakers. A speaker CANNOT speak twice in a row.\n"
-            "RULE 2: Do NOT repeat any statistics, percentages, or facts that were already stated in the PREVIOUS SEGMENT."
+            f"CRITICAL INSTRUCTION: The user just heard the PREVIOUS SEGMENT. The first line of your new draft (spoken by {speaker_1}) "
+            f"MUST naturally transition from that previous conversation into the new SOURCE CONTEXT. Do not introduce yourselves again.\n"
+            f"RULE: Do NOT repeat any statistics, percentages, or facts that were already stated in the PREVIOUS SEGMENT."
         )
+        
     if feedback:
         print(f"  -> Applying Correction: {feedback}")
         system_prompt += f"\n\nCRITICAL FEEDBACK FROM PREVIOUS DRAFT: {feedback}. You MUST fix this in your new draft."
@@ -185,10 +202,10 @@ def draft_node(state: GraphState):
     draft_response = cast(DraftScript, chain.invoke({"context": context}))
     
     draft_str = (
-        f"{draft_response.line_1.speaker}: {draft_response.line_1.text}\n"
-        f"{draft_response.line_2.speaker}: {draft_response.line_2.text}\n"
-        f"{draft_response.line_3.speaker}: {draft_response.line_3.text}\n"
-        f"{draft_response.line_4.speaker}: {draft_response.line_4.text}\n"
+        f"{speaker_1}: {draft_response.line_1.text}\n"
+        f"{speaker_2}: {draft_response.line_2.text}\n"
+        f"{speaker_1}: {draft_response.line_3.text}\n"
+        f"{speaker_2}: {draft_response.line_4.text}\n"
     )
         
     return {"draft": draft_str}

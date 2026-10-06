@@ -1,7 +1,7 @@
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
-from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
+from .llm import llm
 
 class EvaluatedLine(BaseModel):
     speaker: str = Field(description="Exact speaker from the draft (Do not change)")
@@ -36,10 +36,7 @@ def get_evaluator_chain():
     """
     Builds a LangChain pipeline that forces the local Ollama model to output
     data strictly matching the PodcastScript Pydantic schema.
-    """
-    # Using llama3.2 with temperature 0 for deterministic, analytical results
-    llm = ChatOllama(model="llama3.2", temperature=0)
-    
+    """  
     # Bind the Pydantic model to force structured JSON output
     structured_llm = llm.with_structured_output(PodcastScript)
     
@@ -61,6 +58,10 @@ CRITICAL RULES:
 "step_1_explanation_sentence": "The text explicitly states the 60M model dropped by -0.025.",
 "step_2_category": "VERBATIM_FACT",
 "step_3_page_citation": 29
+
+\nCRITICAL RULE: You MUST copy the 'speaker' and 'text' EXACTLY as they appear in the provided draft string.
+DO NOT reassign speakers based on the content. If the provided line starts with 'Host:', your JSON speaker field MUST be 'Host'.
+Your only job is to generate the explanation, the category, and the page citation.
 ================================="""),
         ("human", "SOURCE CONTEXT:\n{context}\n\nDRAFT SCRIPT:\n{script}")
     ])
